@@ -3,32 +3,312 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
   <title>STARFEST 2026 - Scanner Tiket</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
-      background: #101827;
-      color: white;
+      background: #f1f5f9;
+      padding: 20px;
       text-align: center;
-      padding: 40px 16px;
     }
+
     .container {
       max-width: 500px;
       margin: auto;
-      padding: 30px 20px;
-      background: #1e293b;
-      border-radius: 16px;
+      background: white;
+      padding: 20px;
+      border-radius: 15px;
     }
-    h1 { color: #38bdf8; }
+
+    input, select, button {
+      width: 100%;
+      padding: 12px;
+      margin: 8px 0;
+      box-sizing: border-box;
+    }
+
+    button {
+      background: #166534;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #hasil {
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 8px;
+    }
+
+    .sukses {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .gagal {
+      background: #fee2e2;
+      color: #991b1b;
+    }
   </style>
 </head>
+
 <body>
-  <div class="container">
-    <h1>STARFEST 2026</h1>
-    <h2>Scanner Tiket QR</h2>
-    <p>Website scanner berhasil diterbitkan.</p>
-    <p>Selanjutnya: menghubungkan kamera dan Google Sheets.</p>
+
+<div class="container">
+
+  <h2>STARFEST 2026</h2>
+  <h3>SCANNER TIKET QR</h3>
+
+  <input
+    type="password"
+    id="pin"
+    placeholder="Masukkan PIN Petugas"
+    autocomplete="off">
+
+  <select id="kamera">
+    <option value="">Memuat kamera...</option>
+  </select>
+
+  <div id="reader"></div>
+
+  <button onclick="mulaiScanner()">
+    MULAI SCAN
+  </button>
+
+  <button onclick="berhentiScanner()">
+    STOP SCAN
+  </button>
+
+  <div id="hasil">
+    Silakan mulai scanner.
   </div>
+
+</div>
+
+<script>
+
+const API_URL =
+"https://script.google.com/macros/s/AKfycbxf-6RdWGuqX4EH9s0oNno0Hs8n_Ex_SfLY7-Mxk2gnactM0iuhzwqPj5bpfFaxj6BRPQ/exec";
+
+const scanner = new Html5Qrcode("reader");
+
+let kameraAktif = false;
+let sedangProses = false;
+
+function tampilkanHasil(data) {
+
+  const hasil = document.getElementById("hasil");
+
+  hasil.className = data.sukses
+    ? "sukses"
+    : "gagal";
+
+  hasil.innerHTML =
+    "<h3>" + data.status + "</h3>" +
+    "<p>" + data.pesan + "</p>" +
+    (data.nama
+      ? "<p>Nama: " + data.nama + "</p>"
+      : "") +
+    (data.ticketID
+      ? "<p>ID: " + data.ticketID + "</p>"
+      : "");
+}
+
+async function muatKamera() {
+
+  try {
+
+    const cameras =
+      await Html5Qrcode.getCameras();
+
+    const pilihan =
+      document.getElementById("kamera");
+
+    pilihan.innerHTML = "";
+
+    cameras.forEach((camera, index) => {
+
+      const option =
+        document.createElement("option");
+
+      option.value = camera.id;
+      option.textContent = camera.label ||
+        "Kamera " + (index + 1);
+
+      pilihan.appendChild(option);
+
+    });
+
+    if (cameras.length === 0) {
+      throw new Error("Kamera tidak ditemukan");
+    }
+
+  } catch (error) {
+
+    document.getElementById("hasil").textContent =
+      "Tidak dapat mengakses kamera: " + error.message;
+
+  }
+}
+
+async function mulaiScanner() {
+
+  if (kameraAktif) return;
+
+  try {
+
+    const cameraId =
+      document.getElementById("kamera").value;
+
+    if (!cameraId) {
+      alert("Pilih kamera terlebih dahulu.");
+      return;
+    }
+
+    await scanner.start(
+      cameraId,
+      {
+        fps: 10,
+        qrbox: {
+          width: 250,
+          height: 250
+        }
+      },
+      async (decodedText) => {
+
+        if (sedangProses) return;
+
+        sedangProses = true;
+
+        await kirimQR(decodedText);
+
+      },
+      () => {}
+    );
+
+    kameraAktif = true;
+
+  } catch (error) {
+
+    alert("Kamera gagal dijalankan: " + error);
+
+  }
+}
+
+function kirimQR(kodeQR) {
+
+  const pin =
+    document.getElementById("pin").value;
+
+  if (!pin) {
+
+    tampilkanHasil({
+      sukses: false,
+      status: "PIN KOSONG",
+      pesan: "Masukkan PIN petugas."
+    });
+
+    sedangProses = false;
+    return;
+  }
+
+  const callbackName =
+    "scanCallback_" + Date.now();
+
+  const script =
+    document.createElement("script");
+
+  let selesai = false;
+
+  const timer = setTimeout(() => {
+    if (!selesai) {
+      selesai = true;
+      bersihkan();
+
+      tampilkanHasil({
+        sukses: false,
+        status: "TIMEOUT",
+        pesan: "Server tidak merespons."
+      });
+
+      sedangProses = false;
+    }
+  }, 20000);
+
+  function bersihkan() {
+
+    clearTimeout(timer);
+    script.remove();
+    delete window[callbackName];
+
+  }
+
+  window[callbackName] = function(data) {
+
+    if (selesai) return;
+
+    selesai = true;
+    bersihkan();
+
+    tampilkanHasil(data);
+    sedangProses = false;
+
+  };
+
+  script.onerror = function() {
+
+    if (selesai) return;
+
+    selesai = true;
+    bersihkan();
+
+    tampilkanHasil({
+      sukses: false,
+      status: "KONEKSI GAGAL",
+      pesan: "Tidak dapat menghubungi server."
+    });
+
+    sedangProses = false;
+
+  };
+
+  const params = new URLSearchParams({
+    action: "scan",
+    qr: kodeQR,
+    pin: pin,
+    callback: callbackName
+  });
+
+  script.src = API_URL + "?" + params.toString();
+
+  document.body.appendChild(script);
+
+}
+
+async function berhentiScanner() {
+
+  if (!kameraAktif) return;
+
+  await scanner.stop();
+
+  kameraAktif = false;
+  sedangProses = false;
+
+  document.getElementById("hasil").textContent =
+    "Scanner dihentikan.";
+
+}
+
+muatKamera();
+
+</script>
+
 </body>
 </html>
